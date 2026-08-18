@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "import-resources": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/import-resources.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",
@@ -29,6 +30,8 @@
     "eslint": "^9",
     "eslint-config-next": "16.3.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "tsx": "^4.23.12",
+    "typescript": "^5",
+    "xlsx": "^0.18.5"
   }
 }

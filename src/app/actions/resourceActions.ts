@@ -1,52 +1,17 @@
 'use server';
 
-import { randomBytes } from 'crypto';
 import { revalidatePath } from 'next/cache';
 import { requireAdmin } from '@/lib/auth-server';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { generateUniqueSlug } from '@/lib/slug';
 import { resourceSchema } from '@/lib/validations';
 
 export type ResourceActionResult =
   | { ok: true; id?: string; data?: unknown }
   | { ok: false; error: string };
 
-// URL-safe normaliser. Lowercases, strips diacritics/unsafe chars, collapses
-// runs of non-alphanumerics into single hyphens, trims leading/trailing
-// hyphens.
-function normalizeSlug(input: string) {
-  return input
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '') // strip combining diacritics
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80);
-}
-
-// 6-char hex suffix. 24 bits of entropy is plenty for URL uniqueness across
-// resources on this site.
-function shortId() {
-  return randomBytes(3).toString('hex');
-}
-
-// Generate a unique slug for `name`. Format: <normalized-name>-<6 hex chars>.
-// On the astronomically rare collision, regenerate the suffix and try again.
-async function generateUniqueSlug(admin: ReturnType<typeof getSupabaseAdmin>, name: string): Promise<string> {
-  const base = normalizeSlug(name) || 'resource';
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const candidate = `${base}-${shortId()}`;
-    const { data } = await admin
-      .from('downloads')
-      .select('id')
-      .eq('slug', candidate)
-      .is('deleted_at', null)
-      .maybeSingle();
-    if (!data) return candidate;
-  }
-  // Fallback: append timestamp to guarantee uniqueness.
-  return `${base}-${shortId()}-${Date.now().toString(36)}`;
-}
+// Slug generation lives in `@/lib/slug` so the one-off importer
+// (scripts/import-resources.ts) can reuse the same logic.
 
 export async function createResource(input: unknown): Promise<ResourceActionResult> {
   await requireAdmin();
@@ -58,7 +23,7 @@ export async function createResource(input: unknown): Promise<ResourceActionResu
   const data = parsed.data;
 
   const admin = getSupabaseAdmin();
-  const slug = await generateUniqueSlug(admin, data.name);
+  const slug = await generateUniqueSlug(data.name);
 
   const { data: created, error } = await admin
     .from('downloads')
