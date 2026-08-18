@@ -10,8 +10,16 @@ type Download = {
   id: string;
   name: string;
   slug: string;
+  platform: 'windows' | 'mac';
   require_subscribe: boolean;
   require_like: boolean;
+  // Counterpart on the opposite platform, if the admin has linked one. Only
+  // the slug + name + platform are exposed — never the mediafire_url.
+  counterpart: {
+    slug: string;
+    name: string;
+    platform: 'windows' | 'mac';
+  } | null;
 };
 
 type SessionState = {
@@ -292,8 +300,57 @@ export function Gateway({ download }: { download: Download }) {
 
         {/* Final step — Download */}
         <DownloadStep unlocked={state.unlocked} slug={download.slug} name={download.name} />
+
+        {/* Cross-platform counterpart link. Rendered only when a counterpart
+            exists. Never expose mediafire_url — just the public gateway URL
+            on the opposite platform. */}
+        {download.counterpart ? (
+          <CounterpartCard platform={download.platform} counterpart={download.counterpart} />
+        ) : null}
       </div>
     </div>
+  );
+}
+
+function CounterpartCard({
+  platform,
+  counterpart,
+}: {
+  platform: 'windows' | 'mac';
+  counterpart: { slug: string; name: string; platform: 'windows' | 'mac' };
+}) {
+  const otherLabel = counterpart.platform === 'windows' ? 'Windows' : 'Mac';
+  const myLabel = platform === 'windows' ? 'Windows' : 'Mac';
+  return (
+    <Card>
+      <div className="flex items-start gap-4">
+        <div className="flex-shrink-0 h-9 w-9 rounded-full flex items-center justify-center border border-border bg-bg-elevated text-text-muted">
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.75">
+            <path d="M7 7h10M7 7l4 4-4 4M17 17H7m0 0l4-4-4-4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] uppercase tracking-[0.18em] text-text-muted">Also Available</p>
+          <h3 className="mt-0.5 text-sm sm:text-base font-semibold text-text-primary">
+            Available for {otherLabel}
+          </h3>
+          <p className="mt-1 text-sm text-text-muted">
+            Looking for the {otherLabel} version of this resource? Open it on the {otherLabel} gateway.
+          </p>
+          <div className="mt-4">
+            <a
+              href={`/d/${counterpart.slug}`}
+              className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-bg-elevated border border-border text-text-secondary text-sm font-medium hover:bg-bg-hover motion-reduce:transition-none"
+            >
+              View {otherLabel} Version
+            </a>
+            <span className="ml-2 text-xs text-text-muted">
+              ({myLabel} ↔ {otherLabel})
+            </span>
+          </div>
+        </div>
+      </div>
+    </Card>
   );
 }
 

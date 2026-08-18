@@ -2,19 +2,27 @@
 
 import { useState, useTransition } from 'react';
 import Link from 'next/link';
-import { Badge, Button } from '@/components/ui';
-import { deleteResource, toggleResourceStatus } from '@/app/actions/resourceActions';
+import { Badge, Button, EmptyState } from '@/components/ui';
+import {
+  deleteResource,
+  toggleResourceStatus,
+} from '@/app/actions/resourceActions';
 import { showToast } from '@/components/ui/Toaster';
+import type { Platform } from '@/lib/validations';
 
-type Resource = {
+export type ListResource = {
   id: string;
   name: string;
   slug: string;
+  platform: Platform;
   active: boolean;
   download_count: number;
   require_subscribe: boolean;
   require_like: boolean;
   created_at: string;
+  counterpart_id: string | null;
+  counterpart_slug: string | null;
+  counterpart_name: string | null;
 };
 
 function getGatewayOrigin(): string {
@@ -23,7 +31,13 @@ function getGatewayOrigin(): string {
   return typeof window !== 'undefined' ? window.location.origin : '';
 }
 
-export function ResourcesTable({ resources }: { resources: Resource[] }) {
+export function ResourcesList({
+  resources,
+  platform,
+}: {
+  resources: ListResource[];
+  platform: Platform;
+}) {
   const [pending, startTransition] = useTransition();
 
   function copyLink(slug: string) {
@@ -50,18 +64,35 @@ export function ResourcesTable({ resources }: { resources: Resource[] }) {
     });
   }
 
+  if (resources.length === 0) {
+    return (
+      <div className="rounded-2xl border border-border-subtle bg-bg-surface/40 p-10">
+        <EmptyState
+          title={`No ${platform === 'windows' ? 'Windows' : 'Mac'} resources yet`}
+          description={`Create your first ${platform === 'windows' ? 'Windows' : 'Mac'} resource to start sharing.`}
+          action={
+            <Link href={`/admin/${platform}/new`}>
+              <Button>{`+ Add ${platform === 'windows' ? 'Windows' : 'Mac'} Resource`}</Button>
+            </Link>
+          }
+        />
+      </div>
+    );
+  }
+
   return (
     <>
       {/* Desktop table */}
-      <div className="hidden md:block overflow-x-auto">
+      <div className="hidden md:block overflow-x-auto rounded-2xl border border-border-subtle bg-bg-surface/40">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs uppercase tracking-wider text-text-muted">
               <th className="px-5 py-3 font-medium">File</th>
               <th className="px-5 py-3 font-medium">Slug</th>
-              <th className="px-5 py-3 font-medium">Requirements</th>
+              <th className="px-5 py-3 font-medium">Counterpart</th>
               <th className="px-5 py-3 font-medium">Status</th>
               <th className="px-5 py-3 font-medium text-right">Downloads</th>
+              <th className="px-5 py-3 font-medium">Created</th>
               <th className="px-5 py-3 font-medium text-right">Actions</th>
             </tr>
           </thead>
@@ -70,19 +101,23 @@ export function ResourcesTable({ resources }: { resources: Resource[] }) {
               <tr key={r.id} className="hover:bg-bg-hover/40">
                 <td className="px-5 py-3.5">
                   <div className="font-medium text-text-primary">{r.name}</div>
-                  <div className="mt-0.5 text-xs text-text-muted">
-                    {new Date(r.created_at).toLocaleDateString()}
+                  <div className="mt-0.5 flex flex-wrap gap-1">
+                    {r.require_subscribe ? <Badge variant="accent">Subscribe</Badge> : null}
+                    {r.require_like ? <Badge variant="accent">Like</Badge> : null}
+                    {!r.require_subscribe && !r.require_like ? (
+                      <span className="text-xs text-text-muted">No steps</span>
+                    ) : null}
                   </div>
                 </td>
                 <td className="px-5 py-3.5 text-text-secondary font-mono text-xs">/d/{r.slug}</td>
                 <td className="px-5 py-3.5">
-                  <div className="flex flex-wrap gap-1.5">
-                    {r.require_subscribe ? <Badge variant="accent">Subscribe</Badge> : null}
-                    {r.require_like ? <Badge variant="accent">Like</Badge> : null}
-                    {!r.require_subscribe && !r.require_like ? (
-                      <span className="text-xs text-text-muted">None</span>
-                    ) : null}
-                  </div>
+                  {r.counterpart_slug ? (
+                    <span className="text-xs text-text-secondary">
+                      <span className="text-text-muted">↔</span> {r.counterpart_name ?? r.counterpart_slug}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-text-muted">—</span>
+                  )}
                 </td>
                 <td className="px-5 py-3.5">
                   <Badge variant={r.active ? 'success' : 'warning'}>
@@ -92,10 +127,13 @@ export function ResourcesTable({ resources }: { resources: Resource[] }) {
                 <td className="px-5 py-3.5 text-right tabular-nums text-text-secondary">
                   {r.download_count}
                 </td>
+                <td className="px-5 py-3.5 text-xs text-text-muted">
+                  {new Date(r.created_at).toLocaleDateString()}
+                </td>
                 <td className="px-5 py-3.5">
                   <div className="flex items-center justify-end gap-1.5">
                     <Link
-                      href={`/admin/resources/${r.id}/edit`}
+                      href={`/admin/${platform}/${r.id}/edit`}
                       className="h-8 px-2.5 text-xs rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-elevated inline-flex items-center"
                     >
                       Edit
@@ -129,9 +167,9 @@ export function ResourcesTable({ resources }: { resources: Resource[] }) {
       </div>
 
       {/* Mobile cards */}
-      <ul className="md:hidden divide-y divide-border-subtle">
+      <ul className="md:hidden space-y-3">
         {resources.map((r) => (
-          <li key={r.id} className="p-4 space-y-3">
+          <li key={r.id} className="rounded-2xl border border-border-subtle bg-bg-surface/40 p-4 space-y-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="font-medium text-text-primary truncate">{r.name}</p>
@@ -141,13 +179,21 @@ export function ResourcesTable({ resources }: { resources: Resource[] }) {
                 {r.active ? 'Active' : 'Inactive'}
               </Badge>
             </div>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1.5 text-xs">
               {r.require_subscribe ? <Badge variant="accent">Subscribe</Badge> : null}
               {r.require_like ? <Badge variant="accent">Like</Badge> : null}
               <span className="text-xs text-text-muted ml-auto">{r.download_count} downloads</span>
             </div>
+            <div className="text-xs text-text-muted">
+              Counterpart:{' '}
+              {r.counterpart_slug ? (
+                <span className="text-text-secondary">{r.counterpart_name ?? r.counterpart_slug}</span>
+              ) : (
+                <span>—</span>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-2">
-              <Link href={`/admin/resources/${r.id}/edit`}>
+              <Link href={`/admin/${platform}/${r.id}/edit`}>
                 <Button variant="secondary" size="sm" fullWidth>Edit</Button>
               </Link>
               <Button variant="secondary" size="sm" fullWidth onClick={() => copyLink(r.slug)}>

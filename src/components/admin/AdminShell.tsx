@@ -9,11 +9,12 @@ import { Wordmark } from '@/components/brand/Wordmark';
 import { showToast } from '@/components/ui/Toaster';
 
 const NAV = [
-  { href: '/admin', label: 'Dashboard', icon: 'dashboard' as const },
-  { href: '/admin/resources', label: 'Resources', icon: 'resources' as const },
+  { href: '/admin', label: 'Dashboard', icon: 'dashboard' as const, exact: true },
+  { href: '/admin/windows', label: 'Windows', icon: 'windows' as const },
+  { href: '/admin/mac', label: 'Mac', icon: 'mac' as const },
 ];
 
-function Icon({ name }: { name: 'dashboard' | 'resources' }) {
+function Icon({ name }: { name: 'dashboard' | 'windows' | 'mac' }) {
   const common = 'h-4 w-4';
   if (name === 'dashboard') {
     return (
@@ -22,9 +23,17 @@ function Icon({ name }: { name: 'dashboard' | 'resources' }) {
       </svg>
     );
   }
+  if (name === 'windows') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className={common}>
+        <path d="M3 5l8-1.2v8.2H3V5zM12 3.6L21 2v10H12V3.6zM3 13h8v8L3 19.8V13zM12 14h9v8l-9-1.4V14z" strokeLinejoin="round" />
+      </svg>
+    );
+  }
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className={common}>
-      <path d="M4 6h16M4 12h16M4 18h10" strokeLinecap="round" />
+      <path d="M16 4c-2.2 0-4.1 1.2-5 3 1-1.8 3-3 5-3zM8 14a4 4 0 014-4h2a4 4 0 010 8h-2a4 4 0 01-4-4z" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 14a8 8 0 0014 5" strokeLinecap="round" />
     </svg>
   );
 }
@@ -47,6 +56,13 @@ export function AdminShell({ children, userEmail }: { children: React.ReactNode;
     });
   }
 
+  function isActive(item: (typeof NAV)[number]): boolean {
+    if (item.exact) return pathname === item.href;
+    // /admin/windows should NOT highlight when the user is on /admin/mac,
+    // even though both share a prefix.
+    return pathname === item.href || pathname.startsWith(item.href + '/');
+  }
+
   return (
     <div className="min-h-screen flex">
       {/* Desktop sidebar */}
@@ -56,7 +72,7 @@ export function AdminShell({ children, userEmail }: { children: React.ReactNode;
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1">
           {NAV.map((item) => {
-            const active = item.href === '/admin' ? pathname === '/admin' : pathname.startsWith(item.href);
+            const active = isActive(item);
             return (
               <Link
                 key={item.href}
@@ -109,7 +125,7 @@ export function AdminShell({ children, userEmail }: { children: React.ReactNode;
         {open ? (
           <div className="border-t border-border-subtle bg-bg-surface px-3 py-2 space-y-1">
             {NAV.map((item) => {
-              const active = item.href === '/admin' ? pathname === '/admin' : pathname.startsWith(item.href);
+              const active = isActive(item);
               return (
                 <Link
                   key={item.href}

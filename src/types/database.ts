@@ -1,14 +1,22 @@
+// Shared shape returned by the admin listings / edit pages. Counterpart
+// fields are nullable; on the public gateway we expose the counterpart slug
+// so we can deep-link to /d/<slug> without exposing any other internal id.
 export interface DownloadResource {
   id: string;
   name: string;
   slug: string;
+  platform: 'windows' | 'mac';
+  mediafire_url: string;
   require_subscribe: boolean;
   require_like: boolean;
-  // NOTE: youtube_channel_url / youtube_video_url used to live on each row.
-  // They are now global site configuration (NEXT_PUBLIC_YOUTUBE_CHANNEL_URL /
-  // NEXT_PUBLIC_YOUTUBE_VIDEO_URL) and are NOT selected from the downloads
-  // table at runtime. The legacy columns are kept in the DB for backward
-  // compatibility but are never read.
+  active: boolean;
+  download_count: number;
+  created_at: string;
+  // Counterpart join populated by the server when known. We only expose the
+  // slug on the public gateway — internal ids are admin-only.
+  counterpart_id: string | null;
+  counterpart_slug?: string | null;
+  counterpart_name?: string | null;
 }
 
 export interface DownloadSession {
