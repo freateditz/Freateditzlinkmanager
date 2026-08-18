@@ -57,6 +57,22 @@ export const YOUTUBE = {
     return 'https://www.youtube.com/@freat_editz?sub_confirmation=1';
   },
   get videoUrl(): string {
-    return readValidatedHttpsUrl('NEXT_PUBLIC_YOUTUBE_VIDEO_URL');
+    const url = process.env.NEXT_PUBLIC_YOUTUBE_VIDEO_URL;
+    if (!url || url.trim().length === 0) {
+      console.error('NEXT_PUBLIC_YOUTUBE_VIDEO_URL is not configured.');
+      return '';
+    }
+    const trimmed = url.trim();
+    if (!trimmed.startsWith(REQUIRED_HTTPS_PREFIX)) {
+      console.error(`NEXT_PUBLIC_YOUTUBE_VIDEO_URL must start with ${REQUIRED_HTTPS_PREFIX} — got: "${trimmed}"`);
+      return '';
+    }
+    try {
+      new URL(trimmed);
+    } catch {
+      console.error(`NEXT_PUBLIC_YOUTUBE_VIDEO_URL is not a valid URL — got: "${trimmed}"`);
+      return '';
+    }
+    return trimmed;
   },
 } as const;
