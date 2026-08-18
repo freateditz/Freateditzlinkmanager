@@ -54,7 +54,7 @@ function readValidatedHttpsUrl(name: string): string {
 
 export const YOUTUBE = {
   get channelUrl(): string {
-    return readValidatedHttpsUrl('NEXT_PUBLIC_YOUTUBE_CHANNEL_URL');
+    return 'https://www.youtube.com/@freat_editz?sub_confirmation=1';
   },
   get videoUrl(): string {
     return readValidatedHttpsUrl('NEXT_PUBLIC_YOUTUBE_VIDEO_URL');

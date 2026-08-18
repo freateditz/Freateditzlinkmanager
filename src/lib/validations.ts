@@ -8,8 +8,7 @@ const httpsUrl = z
 // Resource form schema.
 //
 // YouTube URLs are NOT part of the resource anymore — they are global
-// site configuration (NEXT_PUBLIC_YOUTUBE_CHANNEL_URL,
-// NEXT_PUBLIC_YOUTUBE_VIDEO_URL). A resource only declares which steps the
+// site configuration. A resource only declares which steps the
 // visitor must complete (Subscribe / Like) and where the actual download
 // points to (MediaFire).
 //
