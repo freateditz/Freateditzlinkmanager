@@ -11,8 +11,6 @@ import { createResource, updateResource } from '@/app/actions/resourceActions';
 type FormValues = {
   name: string;
   mediafire_url: string;
-  youtube_channel_url: string;
-  youtube_video_url: string;
   require_subscribe: boolean;
   require_like: boolean;
   active: boolean;
@@ -21,8 +19,6 @@ type FormValues = {
 const defaults: FormValues = {
   name: '',
   mediafire_url: '',
-  youtube_channel_url: '',
-  youtube_video_url: '',
   require_subscribe: true,
   require_like: true,
   active: true,
@@ -48,8 +44,6 @@ export function ResourceForm({ mode, initial, createdSlug }: { mode: 'create' | 
       ? {
           name: initial.name,
           mediafire_url: initial.mediafire_url,
-          youtube_channel_url: initial.youtube_channel_url ?? '',
-          youtube_video_url: initial.youtube_video_url ?? '',
           require_subscribe: !!initial.require_subscribe,
           require_like: !!initial.require_like,
           active: !!initial.active,
@@ -136,33 +130,20 @@ export function ResourceForm({ mode, initial, createdSlug }: { mode: 'create' | 
           {...form.register('mediafire_url')}
           error={form.formState.errors.mediafire_url?.message}
         />
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input
-            label="YouTube Channel URL"
-            placeholder="https://youtube.com/@freateditz"
-            {...form.register('youtube_channel_url')}
-            error={form.formState.errors.youtube_channel_url?.message}
-          />
-          <Input
-            label="YouTube Video URL"
-            placeholder="https://youtu.be/…"
-            {...form.register('youtube_video_url')}
-            error={form.formState.errors.youtube_video_url?.message}
-          />
-        </div>
 
         <fieldset className="rounded-lg border border-border-subtle bg-bg-elevated/40 p-4 space-y-3">
           <legend className="px-1 text-xs uppercase tracking-wider text-text-muted">Requirements</legend>
           <p className="text-xs text-text-muted -mt-1">
-            V1 uses a timed completion flow and does not perform real YouTube verification.
+            Turn on whichever steps visitors must complete. The YouTube links
+            themselves are site-wide and configured in the environment.
           </p>
           <Checkbox
-            label="Require Subscribe"
+            label="Subscribe to YouTube"
             description="Visitors must visit the channel before unlocking the download."
             {...form.register('require_subscribe')}
           />
           <Checkbox
-            label="Require Like"
+            label="Like the video"
             description="Visitors must visit the video before unlocking the download."
             {...form.register('require_like')}
           />

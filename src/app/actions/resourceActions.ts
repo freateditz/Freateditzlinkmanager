@@ -66,8 +66,9 @@ export async function createResource(input: unknown): Promise<ResourceActionResu
       name: data.name,
       slug,
       mediafire_url: data.mediafire_url,
-      youtube_channel_url: data.youtube_channel_url || null,
-      youtube_video_url: data.youtube_video_url || null,
+      // YouTube URLs are global site config (env vars) — no longer per-resource.
+      // The legacy columns are left untouched on this and existing rows so
+      // historical data is preserved; the runtime never reads them.
       require_subscribe: data.require_subscribe,
       require_like: data.require_like,
       active: data.active,
@@ -97,8 +98,7 @@ export async function updateResource(id: string, input: unknown): Promise<Resour
     .update({
       name: data.name,
       mediafire_url: data.mediafire_url,
-      youtube_channel_url: data.youtube_channel_url || null,
-      youtube_video_url: data.youtube_video_url || null,
+      // YouTube URLs are global site config — no longer per-resource.
       require_subscribe: data.require_subscribe,
       require_like: data.require_like,
       active: data.active,

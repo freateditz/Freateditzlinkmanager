@@ -9,9 +9,13 @@ export default async function GatewayPage({ params }: { params: Promise<{ slug: 
   const { slug } = await params;
   const admin = getSupabaseAdmin();
 
+  // NOTE: youtube_channel_url and youtube_video_url are intentionally NOT
+  // selected. The public gateway reads them from the global YouTube config
+  // (NEXT_PUBLIC_YOUTUBE_CHANNEL_URL / NEXT_PUBLIC_YOUTUBE_VIDEO_URL) at
+  // runtime, not from this row.
   const { data: download } = await admin
     .from('downloads')
-    .select('id, name, slug, require_subscribe, require_like, youtube_channel_url, youtube_video_url, active, deleted_at')
+    .select('id, name, slug, require_subscribe, require_like, active, deleted_at')
     .eq('slug', slug)
     .is('deleted_at', null)
     .eq('active', true)
@@ -39,8 +43,6 @@ export default async function GatewayPage({ params }: { params: Promise<{ slug: 
             slug: download.slug,
             require_subscribe: !!download.require_subscribe,
             require_like: !!download.require_like,
-            youtube_channel_url: download.youtube_channel_url,
-            youtube_video_url: download.youtube_video_url,
           }}
         />
 

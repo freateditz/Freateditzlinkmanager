@@ -3,9 +3,9 @@
 import { cookies } from 'next/headers';
 import { v4 as uuidv4 } from 'uuid';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { MIN_STEP_WAIT_MS } from '@/lib/site';
 
 const SESSION_TTL_MIN = 60 * 24; // 24 hours
-const MIN_STEP_WAIT_MS = 4000;
 const COOKIE_NAME = 'gateway_session';
 
 type Step = 'subscribe' | 'like';
@@ -18,9 +18,12 @@ export async function getOrCreateSession(downloadId: string): Promise<GatewayRes
   const admin = getSupabaseAdmin();
 
   // Confirm the resource exists & is accessible.
+  // Note: youtube_channel_url / youtube_video_url were removed from the
+  // resource form; the runtime reads them from NEXT_PUBLIC_YOUTUBE_* env
+  // vars instead (single global config), not per resource.
   const { data: download } = await admin
     .from('downloads')
-    .select('id, slug, name, mediafire_url, youtube_channel_url, youtube_video_url, require_subscribe, require_like, active, deleted_at')
+    .select('id, slug, name, mediafire_url, require_subscribe, require_like, active, deleted_at')
     .eq('id', downloadId)
     .is('deleted_at', null)
     .eq('active', true)
@@ -129,21 +132,23 @@ export async function completeStep(step: Step): Promise<GatewayResult<{ unlocked
   }
   const elapsed = Date.now() - new Date(startedAt).getTime();
   if (elapsed < MIN_STEP_WAIT_MS) {
-    return { ok: false, error: 'Please wait a moment before continuing.' };
+    const waitSeconds = Math.max(0, Math.ceil((MIN_STEP_WAIT_MS - elapsed) / 1000));
+    return {
+      ok: false,
+      error: `Verification in progress — please wait ${waitSeconds}s.`,
+    };
   }
 
   const admin = getSupabaseAdmin();
   // Atomically mark this step complete ONLY if it isn't already.
-  const { data: updated, error } = await admin
+  const { error } = await admin
     .from('download_sessions')
     .update({
       [`${step}_completed`]: true,
       [`${step}_completed_at`]: new Date().toISOString(),
     })
     .eq('id', session.id)
-    .eq(`${step}_completed`, false)
-    .select('id')
-    .maybeSingle();
+    .eq(`${step}_completed`, false);
 
   if (error) return { ok: false, error: 'Could not complete step.' };
 

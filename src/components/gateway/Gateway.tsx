@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import { Card, Spinner } from '@/components/ui';
 import { showToast } from '@/components/ui/Toaster';
 import { completeStep, getOrCreateSession, startStep } from '@/app/actions/gateway/sessionActions';
+import { MIN_STEP_WAIT_MS, YOUTUBE } from '@/lib/site';
 
 type Download = {
   id: string;
@@ -11,8 +12,6 @@ type Download = {
   slug: string;
   require_subscribe: boolean;
   require_like: boolean;
-  youtube_channel_url: string | null;
-  youtube_video_url: string | null;
 };
 
 type SessionState = {
@@ -25,9 +24,9 @@ type SessionState = {
 };
 
 type StepKey = 'subscribe' | 'like';
-type StepStatus = 'locked' | 'available' | 'waiting_for_return' | 'checking' | 'completed';
+type StepStatus = 'locked' | 'available' | 'verifying' | 'completed';
 
-function Icon({ name }: { name: 'subscribe' | 'like' | 'download' | 'check' | 'lock' }) {
+function Icon({ name }: { name: 'subscribe' | 'like' | 'download' | 'check' | 'lock' | 'spinner' }) {
   const cls = 'h-4 w-4';
   if (name === 'check') {
     return (
@@ -58,6 +57,14 @@ function Icon({ name }: { name: 'subscribe' | 'like' | 'download' | 'check' | 'l
       </svg>
     );
   }
+  if (name === 'spinner') {
+    return (
+      <span
+        className="inline-block h-4 w-4 rounded-full border-2 border-current border-r-transparent animate-spin motion-reduce:animate-none"
+        aria-hidden="true"
+      />
+    );
+  }
   return (
     <svg viewBox="0 0 24 24" className={cls} fill="none" stroke="currentColor" strokeWidth="1.75">
       <path d="M12 4v12m0 0l-4-4m4 4l4-4M4 20h16" strokeLinecap="round" strokeLinejoin="round" />
@@ -68,17 +75,19 @@ function Icon({ name }: { name: 'subscribe' | 'like' | 'download' | 'check' | 'l
 export function Gateway({ download }: { download: Download }) {
   const [state, setState] = useState<SessionState | null>(null);
   const [bootError, setBootError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-  // waitingForReturn = the user clicked the action button and the external
-  // tab has been opened; we're waiting for them to come back so we can run
-  // the server-side check.
-  const [waitingForReturn, setWaitingForReturn] = useState<Record<StepKey, boolean>>({ subscribe: false, like: false });
-  // checking = the server-side minimum wait is in flight (after return detected).
-  const [checking, setChecking] = useState<Record<StepKey, boolean>>({ subscribe: false, like: false });
+  const [, startTransition] = useTransition();
+  // verifying = the user clicked the action, the external tab was opened, and
+  // the client is now polling (until server says ok) without any further input.
+  const [verifying, setVerifying] = useState<Record<StepKey, boolean>>({ subscribe: false, like: false });
 
-  // Refs to debounce return events and to abort in-flight transitions.
-  const returnDetectedAt = useRef<Record<StepKey, number>>({ subscribe: 0, like: 0 });
+  // Refs to coordinate in-flight probes and timers across renders.
   const inFlight = useRef<Record<StepKey, boolean>>({ subscribe: false, like: false });
+  const abortProbe = useRef<Record<StepKey, boolean>>({ subscribe: false, like: false });
+  const pollTimer = useRef<Record<StepKey, ReturnType<typeof setTimeout> | null>>({
+    subscribe: null,
+    like: null,
+  });
+  const retriedSoon = useRef<Record<StepKey, boolean>>({ subscribe: false, like: false });
 
   const refresh = useCallback(async () => {
     const res = await getOrCreateSession(download.id);
@@ -100,56 +109,75 @@ export function Gateway({ download }: { download: Download }) {
     refresh();
   }, [refresh]);
 
-  // Triggered when the user returns to the gateway tab. The server's
-  // SimpleWaitVerifier is the source of truth for whether the step can be
-  // marked complete; this just kicks off the request.
-  const runCheck = useCallback(
-    (step: StepKey) => {
+  const stopProbing = useCallback((step: StepKey) => {
+    abortProbe.current[step] = true;
+    if (pollTimer.current[step]) {
+      clearTimeout(pollTimer.current[step]);
+      pollTimer.current[step] = null;
+    }
+  }, []);
+
+  // Probe the server for completion. Idempotent and rate-limited: the server
+  // returns "please wait Ns" until MIN_STEP_WAIT_MS has elapsed, and we back off
+  // to that hint. Stops as soon as the server reports success or the session is
+  // gone — never infinite polls.
+  const probe = useCallback(
+    async (step: StepKey) => {
       if (inFlight.current[step]) return;
       inFlight.current[step] = true;
-      setChecking((c) => ({ ...c, [step]: true }));
-
-      startTransition(async () => {
-        try {
-          // Client-side 600ms feels natural before the server response.
-          await new Promise((r) => setTimeout(r, 600));
-          const res = await completeStep(step);
-          if (!res.ok) {
-            showToast(res.error, 'error');
-          } else {
-            showToast('Step completed', 'success');
-          }
-          await refresh();
-        } finally {
-          inFlight.current[step] = false;
-          setChecking((c) => ({ ...c, [step]: false }));
-          setWaitingForReturn((w) => ({ ...w, [step]: false }));
+      try {
+        const res = await completeStep(step);
+        if (!res.ok) {
+          // Parse the suggested wait time from the error message if it matches
+          // the form "Verification in progress — please wait Ns." so we can
+          // back off cleanly. Falling back to MIN_STEP_WAIT_MS.
+          const match = res.error?.match(/wait (\d+)s/);
+          const waitSeconds = match ? Math.max(1, parseInt(match[1], 10)) : MIN_STEP_WAIT_MS / 1000;
+          if (abortProbe.current[step]) return;
+          pollTimer.current[step] = setTimeout(() => probe(step), waitSeconds * 1000);
+          return;
         }
-      });
+        // Success: server has confirmed completion. Stop polling for this step.
+        stopProbing(step);
+        setVerifying((v) => ({ ...v, [step]: false }));
+        await refresh();
+      } catch {
+        if (!abortProbe.current[step]) {
+          // Network blip — try again in a moment, but bail if the user navigated.
+          pollTimer.current[step] = setTimeout(() => probe(step), 2000);
+        }
+      } finally {
+        inFlight.current[step] = false;
+      }
     },
-    [refresh]
+    [refresh, stopProbing]
   );
 
-  // Set up listeners for detecting return. The user must have explicitly
-  // started a step (waitingForReturn=true) for the return to matter, and
-  // we debounce so a flurry of events only triggers one check.
+  // When the tab becomes visible/focused again, kick off an immediate probe.
+  // The server will refuse to complete early if MIN_STEP_WAIT_MS hasn't
+  // elapsed, so a quick return doesn't lead to early unlock.
   useEffect(() => {
     function onReturn(step: StepKey) {
-      const now = Date.now();
-      if (now - returnDetectedAt.current[step] < 1000) return;
-      returnDetectedAt.current[step] = now;
-      runCheck(step);
+      if (!verifying[step]) return;
+      if (retriedSoon.current[step]) return;
+      retriedSoon.current[step] = true;
+      // Reset the one-shot flag so a later genuine return (e.g. mobile Safari
+      // delivering multiple visibility events) still gets a fresh probe.
+      setTimeout(() => {
+        retriedSoon.current[step] = false;
+      }, 4000);
+      probe(step);
     }
 
     function onVisibility() {
       if (document.visibilityState !== 'visible') return;
-      if (waitingForReturn.subscribe) onReturn('subscribe');
-      if (waitingForReturn.like) onReturn('like');
+      onReturn('subscribe');
+      onReturn('like');
     }
 
     function onFocus() {
-      if (waitingForReturn.subscribe) onReturn('subscribe');
-      if (waitingForReturn.like) onReturn('like');
+      onReturn('subscribe');
+      onReturn('like');
     }
 
     document.addEventListener('visibilitychange', onVisibility);
@@ -160,32 +188,38 @@ export function Gateway({ download }: { download: Download }) {
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('pageshow', onFocus);
     };
-  }, [waitingForReturn, runCheck]);
+  }, [verifying, probe]);
+
+  // Cleanup any pending timers when the component unmounts.
+  useEffect(() => {
+    return () => {
+      (['subscribe', 'like'] as StepKey[]).forEach((s) => {
+        if (pollTimer.current[s]) clearTimeout(pollTimer.current[s]);
+      });
+    };
+  }, []);
 
   function handleStart(step: StepKey) {
-    const url = step === 'subscribe' ? download.youtube_channel_url : download.youtube_video_url;
+    const url = step === 'subscribe' ? YOUTUBE.channelUrl : YOUTUBE.videoUrl;
     if (url) {
       window.open(url, '_blank', 'noopener,noreferrer');
     }
+    abortProbe.current[step] = false;
+    setVerifying((v) => ({ ...v, [step]: true }));
     startTransition(async () => {
       const res = await startStep(step);
       if (!res.ok) {
         showToast(res.error, 'error');
+        setVerifying((v) => ({ ...v, [step]: false }));
+        stopProbing(step);
         return;
       }
-      // Mark that we're waiting for the user to come back. The visibility/
-      // focus listeners will fire the server-side check automatically.
-      returnDetectedAt.current[step] = 0;
-      setWaitingForReturn((w) => ({ ...w, [step]: true }));
+      // Kick off the first probe immediately — the server will refuse if 10s
+      // haven't elapsed yet, so this can never complete early. After that we
+      // rely on the server's hint to schedule the next attempt.
       await refresh();
+      probe(step);
     });
-  }
-
-  // Fallback: if the browser doesn't fire visibility/focus reliably, the user
-  // can click the "I'm back" affordance. This still goes through the same
-  // server-side timing enforcement — it is NOT a manual completion button.
-  function handleImBack(step: StepKey) {
-    runCheck(step);
   }
 
   if (bootError) {
@@ -213,26 +247,24 @@ export function Gateway({ download }: { download: Download }) {
   const done = (showSubscribe && state.subscribe_completed ? 1 : 0) + (showLike && state.like_completed ? 1 : 0) + (state.unlocked ? 1 : 0);
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
+  // If subscribe isn't required, treat it as effectively completed for UX
+  // purposes so the like/download flow is unlocked immediately.
   const subscribeStatus: StepStatus = !showSubscribe
     ? 'completed'
     : state.subscribe_completed
     ? 'completed'
-    : checking.subscribe
-    ? 'checking'
-    : waitingForReturn.subscribe || state.subscribe_started_at
-    ? 'waiting_for_return'
+    : verifying.subscribe || state.subscribe_started_at
+    ? 'verifying'
     : 'available';
 
   const likeStatus: StepStatus = !showLike
     ? 'completed'
     : state.like_completed
     ? 'completed'
-    : checking.like
-    ? 'checking'
-    : !state.subscribe_completed
+    : subscribeStatus !== 'completed'
     ? 'locked'
-    : waitingForReturn.like || state.like_started_at
-    ? 'waiting_for_return'
+    : verifying.like || state.like_started_at
+    ? 'verifying'
     : 'available';
 
   return (
@@ -246,9 +278,6 @@ export function Gateway({ download }: { download: Download }) {
             status={subscribeStatus}
             title="Subscribe to our channel"
             onStart={() => handleStart('subscribe')}
-            onReturn={() => handleImBack('subscribe')}
-            checking={checking.subscribe}
-            disabled={pending}
           />
         ) : null}
 
@@ -258,9 +287,6 @@ export function Gateway({ download }: { download: Download }) {
             status={likeStatus}
             title="Like the video"
             onStart={() => handleStart('like')}
-            onReturn={() => handleImBack('like')}
-            checking={checking.like}
-            disabled={pending || likeStatus === 'locked'}
           />
         ) : null}
 
@@ -282,7 +308,7 @@ function ProgressBar({ percent, done, total }: { percent: number; done: number; 
       </div>
       <div className="h-1.5 rounded-full bg-bg-elevated overflow-hidden">
         <div
-          className="h-full bg-accent transition-all duration-500 ease-out"
+          className="h-full bg-accent transition-all duration-500 ease-out motion-reduce:transition-none"
           style={{ width: `${percent}%` }}
           aria-valuenow={percent}
           aria-valuemin={0}
@@ -299,38 +325,37 @@ function Step({
   status,
   title,
   onStart,
-  onReturn,
-  checking,
-  disabled,
 }: {
   index: number;
   status: StepStatus;
   title: string;
   onStart: () => void;
-  onReturn: () => void;
-  checking: boolean;
-  disabled: boolean;
 }) {
   const isLocked = status === 'locked';
   const isCompleted = status === 'completed';
-  const isChecking = status === 'checking' || checking;
-  const isWaiting = status === 'waiting_for_return';
+  const isVerifying = status === 'verifying';
 
   let description = '';
   if (isCompleted) {
     description = 'Step completed.';
   } else if (isLocked) {
-    description = 'Complete the previous step to unlock this one.';
-  } else if (isChecking) {
-    description = 'Step completed once the server confirms.';
-  } else if (isWaiting) {
-    description = 'Come back to this tab when you’re done — we’ll detect the return automatically.';
+    description = 'Unlocks when the previous step finishes.';
+  } else if (isVerifying) {
+    description = 'Verification in progress — finishing on its own.';
   } else {
-    description = 'Tap the button to open it in a new tab. The next step starts when you return.';
+    description = 'Tap the button to open it in a new tab. The next step starts automatically.';
   }
 
+  // Header label reflects the V1 auto-state: "STEP 1", "Verifying…", or "Done".
+  const header =
+    isCompleted
+      ? `STEP ${String(index).padStart(2, '0')} — DONE`
+      : isVerifying
+      ? `STEP ${String(index).padStart(2, '0')} — VERIFYING`
+      : `STEP ${String(index).padStart(2, '0')}`;
+
   return (
-    <Card className={['transition-all duration-300', isLocked ? 'opacity-60' : ''].join(' ')}>
+    <Card className={['transition-all duration-300 motion-reduce:transition-none', isLocked ? 'opacity-60' : ''].join(' ')}>
       <div className="flex items-start gap-4">
         <div
           className={[
@@ -339,6 +364,8 @@ function Step({
               ? 'bg-success/15 text-success border border-success/30'
               : isLocked
               ? 'bg-bg-elevated text-text-muted border border-border'
+              : isVerifying
+              ? 'bg-accent/15 text-accent border border-accent/30'
               : 'bg-accent/15 text-accent border border-accent/30',
           ].join(' ')}
           aria-hidden="true"
@@ -346,13 +373,14 @@ function Step({
           {isCompleted ? <Icon name="check" /> : <span className="tabular-nums">{String(index).padStart(2, '0')}</span>}
         </div>
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm sm:text-base font-semibold text-text-primary">{title}</h3>
+          <p className="text-[10px] uppercase tracking-[0.18em] text-text-muted">{header}</p>
+          <h3 className="mt-0.5 text-sm sm:text-base font-semibold text-text-primary">{title}</h3>
           <p className="mt-1 text-sm text-text-muted">{description}</p>
           <div className="mt-4">
             {isLocked ? (
               <button
                 disabled
-                className="inline-flex items-center gap-2 h-10 px-4 rounded-lg border border-border bg-bg-elevated text-text-muted text-sm font-medium cursor-not-allowed"
+                className="inline-flex items-center gap-2 h-10 px-4 rounded-lg border border-border bg-bg-elevated text-text-muted text-sm font-medium cursor-not-allowed motion-reduce:transition-none"
                 aria-label="Step locked"
               >
                 <Icon name="lock" />
@@ -361,44 +389,24 @@ function Step({
             ) : isCompleted ? (
               <button
                 disabled
-                className="inline-flex items-center gap-2 h-10 px-4 rounded-lg bg-success/10 text-success border border-success/20 text-sm font-medium cursor-default"
+                className="inline-flex items-center gap-2 h-10 px-4 rounded-lg bg-success/10 text-success border border-success/20 text-sm font-medium cursor-default motion-reduce:transition-none"
               >
                 <Icon name="check" />
-                Step completed
+                Completed
               </button>
-            ) : isChecking ? (
+            ) : isVerifying ? (
               <button
                 disabled
                 aria-live="polite"
-                className="inline-flex items-center gap-2 h-10 px-4 rounded-lg bg-bg-elevated border border-border text-text-secondary text-sm font-medium"
+                className="inline-flex items-center gap-2 h-10 px-4 rounded-lg bg-bg-elevated border border-border text-text-secondary text-sm font-medium motion-reduce:transition-none"
               >
-                <Spinner />
-                Checking…
+                <Icon name="spinner" />
+                Verifying…
               </button>
-            ) : isWaiting ? (
-              <div className="flex flex-col sm:flex-row gap-2">
-                <button
-                  disabled
-                  aria-live="polite"
-                  className="inline-flex items-center gap-2 h-10 px-4 rounded-lg bg-bg-elevated border border-border text-text-secondary text-sm font-medium"
-                >
-                  <Spinner />
-                  Checking…
-                </button>
-                <button
-                  type="button"
-                  onClick={onReturn}
-                  disabled={disabled}
-                  className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-bg-elevated border border-border text-text-secondary text-sm font-medium hover:bg-bg-hover disabled:opacity-50"
-                >
-                  I’m back
-                </button>
-              </div>
             ) : (
               <button
                 onClick={onStart}
-                disabled={disabled}
-                className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-accent text-bg text-sm font-semibold hover:bg-accent-hover disabled:opacity-50"
+                className="inline-flex items-center justify-center gap-2 h-10 px-4 rounded-lg bg-accent text-bg text-sm font-semibold hover:bg-accent-hover motion-reduce:transition-none"
               >
                 <Icon name={index === 1 ? 'subscribe' : 'like'} />
                 {index === 1 ? 'Subscribe' : 'Like Video'}
@@ -412,10 +420,11 @@ function Step({
 }
 
 function DownloadStep({ unlocked, slug, name }: { unlocked: boolean; slug: string; name: string }) {
+  const header = unlocked ? 'DOWNLOAD READY' : 'DOWNLOAD';
   return (
     <Card
       className={[
-        'transition-all duration-500',
+        'transition-all duration-500 motion-reduce:transition-none',
         unlocked ? 'border-accent/30 shadow-glow' : 'opacity-70',
       ].join(' ')}
     >
@@ -431,19 +440,20 @@ function DownloadStep({ unlocked, slug, name }: { unlocked: boolean; slug: strin
           <Icon name="download" />
         </div>
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm sm:text-base font-semibold text-text-primary">
-            {unlocked ? '✓ All steps completed' : 'Download'}
+          <p className="text-[10px] uppercase tracking-[0.18em] text-text-muted">{header}</p>
+          <h3 className="mt-0.5 text-sm sm:text-base font-semibold text-text-primary">
+            {unlocked ? 'All steps completed' : 'Download'}
           </h3>
           <p className="mt-1 text-sm text-text-muted">
             {unlocked
               ? 'Your download is ready.'
-              : 'The download unlocks once every step above is complete.'}
+              : 'Unlocks once every step above is complete.'}
           </p>
           <div className="mt-4">
             {unlocked ? (
               <a
                 href={`/api/download/${slug}`}
-                className="inline-flex items-center justify-center gap-2 h-10 px-5 rounded-lg bg-accent text-bg text-sm font-semibold hover:bg-accent-hover transition-colors animate-slideIn"
+                className="inline-flex items-center justify-center gap-2 h-10 px-5 rounded-lg bg-accent text-bg text-sm font-semibold hover:bg-accent-hover transition-colors motion-reduce:transition-none animate-slideIn"
               >
                 <Icon name="download" />
                 Download {name}
