@@ -7,7 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "import-resources": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/import-resources.ts"
+    "import-windows": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/import-resources.ts windows",
+    "import-mac": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/import-resources.ts mac",
+    "import-all": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/import-resources.ts all",
+    "import-summary": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/import-resources.ts summary",
+    "import-resources": "tsx --env-file-if-exists=.env --env-file-if-exists=.env.local scripts/import-resources.ts all"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",
