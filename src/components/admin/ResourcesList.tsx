@@ -8,6 +8,7 @@ import {
   toggleResourceStatus,
 } from '@/app/actions/resourceActions';
 import { showToast } from '@/components/ui/Toaster';
+import { formatDate } from '@/lib/date';
 import type { Platform } from '@/lib/validations';
 
 export type ListResource = {
@@ -127,8 +128,8 @@ export function ResourcesList({
                 <td className="px-5 py-3.5 text-right tabular-nums text-text-secondary">
                   {r.download_count}
                 </td>
-                <td className="px-5 py-3.5 text-xs text-text-muted">
-                  {new Date(r.created_at).toLocaleDateString()}
+                <td className="px-5 py-3.5 text-xs text-text-muted tabular-nums">
+                  {formatDate(r.created_at)}
                 </td>
                 <td className="px-5 py-3.5">
                   <div className="flex items-center justify-end gap-1.5">
